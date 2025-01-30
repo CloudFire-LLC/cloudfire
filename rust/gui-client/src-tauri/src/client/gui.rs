@@ -285,6 +285,8 @@ pub(crate) fn run(
             return Err(anyhow::Error::new(error));
         }
         Ok(Ok(_)) => {
+            tracing::info!("Controller exited gracefully");
+
             rt.block_on(telemetry.stop());
 
             return Ok(());
