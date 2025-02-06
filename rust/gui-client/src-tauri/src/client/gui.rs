@@ -283,9 +283,7 @@ pub(crate) fn run(
                 | tauri::RunEvent::Resumed
                 | tauri::RunEvent::MainEventsCleared
                 | tauri::RunEvent::TrayIconEvent(_)
-                | _ => {
-                    tracing::debug!(?event)
-                }
+                | _ => {}
             }
         });
     }
