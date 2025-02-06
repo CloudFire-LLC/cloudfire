@@ -285,7 +285,7 @@ pub(crate) fn run(
 
     app.cleanup_before_exit();
 
-    match ctrl_task.now_or_never().expect("task is finished; qed") {
+    match rt.block_on(ctrl_task) {
         Err(panic) => {
             // The panic will have been recorded already by Sentry's panic hook.
             rt.block_on(telemetry.stop_on_crash());
