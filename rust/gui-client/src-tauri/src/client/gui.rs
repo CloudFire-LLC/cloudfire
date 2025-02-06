@@ -278,7 +278,9 @@ pub(crate) fn run(
 
                     let _ = ctlr_tx.blocking_send(ControllerRequest::SystemTrayMenu(event));
                 }
-                _ => {}
+                run_event => {
+                    tracing::debug!(?run_event)
+                }
             }
         });
     }
