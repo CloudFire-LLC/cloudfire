@@ -19,7 +19,6 @@ use firezone_gui_client_common::{
 use firezone_headless_client::LogFilterReloader;
 use firezone_logging::err_with_src;
 use firezone_telemetry as telemetry;
-use futures::FutureExt;
 use secrecy::{ExposeSecret as _, SecretString};
 use std::{str::FromStr, time::Duration};
 use tauri::Manager;
@@ -256,7 +255,6 @@ pub(crate) fn run(
         let ctlr_tx = ctlr_tx.clone();
 
         app.run_iteration(move |_, event| {
-            #[allow(clippy::wildcard_enum_match_arm)]
             match event {
                 tauri::RunEvent::ExitRequested { api, .. } => {
                     // Don't exit if we close our main window
@@ -278,8 +276,15 @@ pub(crate) fn run(
 
                     let _ = ctlr_tx.blocking_send(ControllerRequest::SystemTrayMenu(event));
                 }
-                run_event => {
-                    tracing::debug!(?run_event)
+                tauri::RunEvent::Exit
+                | tauri::RunEvent::WindowEvent { .. }
+                | tauri::RunEvent::WebviewEvent { .. }
+                | tauri::RunEvent::Ready
+                | tauri::RunEvent::Resumed
+                | tauri::RunEvent::MainEventsCleared
+                | tauri::RunEvent::TrayIconEvent(_)
+                | _ => {
+                    tracing::debug!(?event)
                 }
             }
         });
