@@ -259,36 +259,36 @@ pub(crate) fn run(
         }
     });
 
-    app.run_return(move |_, event| {
-        match event {
+    app.run_return(move |_, event| match event {
+        tauri::RunEvent::ExitRequested {
+            api, code: None, .. // `code: None` means the user closed the last window.
+        } => {
             // Don't exit if we close our main window
             // https://tauri.app/v1/guides/features/system-tray/#preventing-the-app-from-closing
-            tauri::RunEvent::ExitRequested { api, code: None, .. } => {
-                api.prevent_exit();
-            }
-            tauri::RunEvent::MenuEvent(event) => {
-                let id = &event.id.0;
-                tracing::debug!(?id, "SystemTrayEvent::MenuItemClick");
-
-                let event = match serde_json::from_str::<TrayMenuEvent>(id) {
-                    Ok(x) => x,
-                    Err(e) => {
-                        tracing::error!("{e}");
-                        return;
-                    }
-                };
-
-                let _ = ctlr_tx.blocking_send(ControllerRequest::SystemTrayMenu(event));
-            }
-            tauri::RunEvent::Exit
-            | tauri::RunEvent::WindowEvent { .. }
-            | tauri::RunEvent::WebviewEvent { .. }
-            | tauri::RunEvent::Ready
-            | tauri::RunEvent::Resumed
-            | tauri::RunEvent::MainEventsCleared
-            | tauri::RunEvent::TrayIconEvent(_)
-            | _ => {}
+            api.prevent_exit();
         }
+        tauri::RunEvent::MenuEvent(event) => {
+            let id = &event.id.0;
+            tracing::debug!(?id, "SystemTrayEvent::MenuItemClick");
+
+            let event = match serde_json::from_str::<TrayMenuEvent>(id) {
+                Ok(x) => x,
+                Err(e) => {
+                    tracing::error!("{e}");
+                    return;
+                }
+            };
+
+            let _ = ctlr_tx.blocking_send(ControllerRequest::SystemTrayMenu(event));
+        }
+        tauri::RunEvent::Exit
+        | tauri::RunEvent::WindowEvent { .. }
+        | tauri::RunEvent::WebviewEvent { .. }
+        | tauri::RunEvent::Ready
+        | tauri::RunEvent::Resumed
+        | tauri::RunEvent::MainEventsCleared
+        | tauri::RunEvent::TrayIconEvent(_)
+        | _ => {}
     });
 
     match rt.block_on(ctrl_task) {
