@@ -259,6 +259,7 @@ pub(crate) fn run(
         }
     });
 
+    // Run the event-loop until the Tauri app shuts down.
     app.run_return(move |_, event| match event {
         tauri::RunEvent::ExitRequested {
             api, code: None, .. // `code: None` means the user closed the last window.
@@ -291,6 +292,10 @@ pub(crate) fn run(
         | _ => {}
     });
 
+    // Wait for the controller task to finish.
+    // The controller task shuts down the Tauri app before it exits.
+    // Hence, this future will almost certainly be `Ready` immediately when we get here.
+    // We await it here because we want the `Result` from the controller.
     match rt.block_on(ctrl_task) {
         Err(panic) => {
             // The panic will have been recorded already by Sentry's panic hook.
