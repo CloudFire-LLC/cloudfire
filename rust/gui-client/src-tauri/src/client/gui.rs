@@ -139,7 +139,7 @@ pub(crate) fn run(
         inject_faults: cli.inject_faults,
     };
 
-    let mut app = tauri::Builder::default()
+    let app = tauri::Builder::default()
         .manage(managed)
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -248,47 +248,48 @@ pub(crate) fn run(
         updates_rx,
     );
 
-    let ctrl_task = rt.spawn(controller);
+    let ctrl_task = rt.spawn({
+        let handle = app.handle().clone();
+        async move {
+            let result = controller.await;
 
-    // While our controller task is running, tick the eventloop of Tauri.
-    while !ctrl_task.is_finished() {
-        let ctlr_tx = ctlr_tx.clone();
+            handle.exit(0); // TODO: Introduce `GuiIntegration::shutdown/exit`.
 
-        app.run_iteration(move |_, event| {
-            match event {
-                tauri::RunEvent::ExitRequested { api, .. } => {
-                    // Don't exit if we close our main window
-                    // https://tauri.app/v1/guides/features/system-tray/#preventing-the-app-from-closing
+            result
+        }
+    });
 
-                    api.prevent_exit();
-                }
-                tauri::RunEvent::MenuEvent(event) => {
-                    let id = &event.id.0;
-                    tracing::debug!(?id, "SystemTrayEvent::MenuItemClick");
-
-                    let event = match serde_json::from_str::<TrayMenuEvent>(id) {
-                        Ok(x) => x,
-                        Err(e) => {
-                            tracing::error!("{e}");
-                            return;
-                        }
-                    };
-
-                    let _ = ctlr_tx.blocking_send(ControllerRequest::SystemTrayMenu(event));
-                }
-                tauri::RunEvent::Exit
-                | tauri::RunEvent::WindowEvent { .. }
-                | tauri::RunEvent::WebviewEvent { .. }
-                | tauri::RunEvent::Ready
-                | tauri::RunEvent::Resumed
-                | tauri::RunEvent::MainEventsCleared
-                | tauri::RunEvent::TrayIconEvent(_)
-                | _ => {}
+    app.run_return(move |_, event| {
+        match event {
+            // Don't exit if we close our main window
+            // https://tauri.app/v1/guides/features/system-tray/#preventing-the-app-from-closing
+            tauri::RunEvent::ExitRequested { api, code: None, .. } => {
+                api.prevent_exit();
             }
-        });
-    }
+            tauri::RunEvent::MenuEvent(event) => {
+                let id = &event.id.0;
+                tracing::debug!(?id, "SystemTrayEvent::MenuItemClick");
 
-    app.cleanup_before_exit();
+                let event = match serde_json::from_str::<TrayMenuEvent>(id) {
+                    Ok(x) => x,
+                    Err(e) => {
+                        tracing::error!("{e}");
+                        return;
+                    }
+                };
+
+                let _ = ctlr_tx.blocking_send(ControllerRequest::SystemTrayMenu(event));
+            }
+            tauri::RunEvent::Exit
+            | tauri::RunEvent::WindowEvent { .. }
+            | tauri::RunEvent::WebviewEvent { .. }
+            | tauri::RunEvent::Ready
+            | tauri::RunEvent::Resumed
+            | tauri::RunEvent::MainEventsCleared
+            | tauri::RunEvent::TrayIconEvent(_)
+            | _ => {}
+        }
+    });
 
     match rt.block_on(ctrl_task) {
         Err(panic) => {
