@@ -239,16 +239,16 @@ pub(crate) fn run(
         app: app.handle().clone(),
         tray,
     };
-    let controller = Controller::start(
+
+    let ctrl_task = rt.spawn(Controller::start(
         ctlr_tx.clone(),
         integration,
         ctlr_rx,
         advanced_settings,
         reloader,
         updates_rx,
-    );
+    ));
 
-    let ctrl_task = rt.spawn(controller);
     // Spawn a supervisor task that exits the app in any error case, even panics.
     let ctrl_supervisor = rt.spawn({
         let handle = app.handle().clone();
