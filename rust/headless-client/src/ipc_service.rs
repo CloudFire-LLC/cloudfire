@@ -292,7 +292,7 @@ enum Session {
         cb_rx: mpsc::Receiver<ConnlibMsg>,
         connlib: connlib_client_shared::Session,
     },
-    RetryWhenConnected {
+    WaitingForNetwork {
         api_url: String,
         token: SecretString,
     },
@@ -410,7 +410,7 @@ impl<'a> Handler<'a> {
 
                             self.session = Some(Session::Connected { cb_rx, connlib });
                         }
-                        Some(Session::RetryWhenConnected { api_url, token }) => {
+                        Some(Session::WaitingForNetwork { api_url, token }) => {
                             tracing::info!("Attempting to re-connect upon network change");
 
                             let result = self.try_connect(&api_url, token.clone());
@@ -421,7 +421,7 @@ impl<'a> Handler<'a> {
                                 .and_then(|e| e.root_cause().downcast_ref::<io::Error>())
                             {
                                 tracing::debug!("Still cannot connect to Firezone: {e}");
-                                self.session = Some(Session::RetryWhenConnected { api_url, token });
+                                self.session = Some(Session::WaitingForNetwork { api_url, token });
 
                                 continue;
                             }
@@ -562,7 +562,7 @@ impl<'a> Handler<'a> {
                     .and_then(|e| e.root_cause().downcast_ref::<io::Error>())
                 {
                     tracing::debug!("Encountered IO error when connecting to portal, most likely we don't have Internet: {e}");
-                    self.session = Some(Session::RetryWhenConnected { api_url, token });
+                    self.session = Some(Session::WaitingForNetwork { api_url, token });
 
                     return Ok(());
                 }
