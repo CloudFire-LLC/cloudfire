@@ -551,12 +551,7 @@ impl<'a> Handler<'a> {
                 error_msg,
                 is_authentication_error,
             } => {
-                if let Session::Creating { connlib, .. } | Session::Connected { connlib, .. } =
-                    mem::take(&mut self.session)
-                {
-                    // Identical to dropping, but looks nicer
-                    connlib.disconnect();
-                }
+                self.session = Session::None;
                 self.dns_controller.deactivate()?;
                 self.ipc_tx
                     .send(&ServerMsg::OnDisconnect {
@@ -640,13 +635,9 @@ impl<'a> Handler<'a> {
                     .context("Failed to send `ConnectResult`")?;
             }
             ClientMsg::Disconnect => {
-                if let Session::Creating { connlib, .. } | Session::Connected { connlib, .. } =
-                    mem::take(&mut self.session)
-                {
-                    // Identical to dropping it, but looks nicer.
-                    connlib.disconnect();
-                    self.dns_controller.deactivate()?;
-                }
+                self.session = Session::None;
+                self.dns_controller.deactivate()?;
+
                 // Always send `DisconnectedGracefully` even if we weren't connected,
                 // so this will be idempotent.
                 self.ipc_tx
