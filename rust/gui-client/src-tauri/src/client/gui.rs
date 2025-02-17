@@ -290,7 +290,8 @@ pub(crate) fn run(
         | tauri::RunEvent::MainEventsCleared
         | tauri::RunEvent::TrayIconEvent(_)
         | _ => {}
-    });
+    })
+    .map_err(|e| anyhow::anyhow!("Tauri setup failed: {e}"))?;
 
     // Wait for the controller task to finish.
     // The controller task shuts down the Tauri app before it exits.
