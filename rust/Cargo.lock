@@ -6449,7 +6449,7 @@ checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
 [[package]]
 name = "tauri"
 version = "2.2.5"
-source = "git+https://github.com/thomaseizinger/tauri?branch=feat%2Fintroduce-run-return#930e45fd0a3ccf5f2dafb00558a5592d8e22a8ed"
+source = "git+https://github.com/thomaseizinger/tauri?branch=feat%2Fintroduce-run-return#93f566ca4f46b390ac0833c75ca8c39338a1c446"
 dependencies = [
  "anyhow",
  "bytes",
@@ -6521,7 +6521,7 @@ dependencies = [
 [[package]]
 name = "tauri-build"
 version = "2.0.5"
-source = "git+https://github.com/thomaseizinger/tauri?branch=feat%2Fintroduce-run-return#930e45fd0a3ccf5f2dafb00558a5592d8e22a8ed"
+source = "git+https://github.com/thomaseizinger/tauri?branch=feat%2Fintroduce-run-return#93f566ca4f46b390ac0833c75ca8c39338a1c446"
 dependencies = [
  "anyhow",
  "cargo_toml",
@@ -6542,7 +6542,7 @@ dependencies = [
 [[package]]
 name = "tauri-codegen"
 version = "2.0.4"
-source = "git+https://github.com/thomaseizinger/tauri?branch=feat%2Fintroduce-run-return#930e45fd0a3ccf5f2dafb00558a5592d8e22a8ed"
+source = "git+https://github.com/thomaseizinger/tauri?branch=feat%2Fintroduce-run-return#93f566ca4f46b390ac0833c75ca8c39338a1c446"
 dependencies = [
  "base64 0.22.1",
  "brotli",
@@ -6568,7 +6568,7 @@ dependencies = [
 [[package]]
 name = "tauri-macros"
 version = "2.0.4"
-source = "git+https://github.com/thomaseizinger/tauri?branch=feat%2Fintroduce-run-return#930e45fd0a3ccf5f2dafb00558a5592d8e22a8ed"
+source = "git+https://github.com/thomaseizinger/tauri?branch=feat%2Fintroduce-run-return#93f566ca4f46b390ac0833c75ca8c39338a1c446"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -6701,7 +6701,7 @@ dependencies = [
 [[package]]
 name = "tauri-runtime"
 version = "2.3.0"
-source = "git+https://github.com/thomaseizinger/tauri?branch=feat%2Fintroduce-run-return#930e45fd0a3ccf5f2dafb00558a5592d8e22a8ed"
+source = "git+https://github.com/thomaseizinger/tauri?branch=feat%2Fintroduce-run-return#93f566ca4f46b390ac0833c75ca8c39338a1c446"
 dependencies = [
  "dpi",
  "gtk",
@@ -6719,7 +6719,7 @@ dependencies = [
 [[package]]
 name = "tauri-runtime-wry"
 version = "2.3.0"
-source = "git+https://github.com/thomaseizinger/tauri?branch=feat%2Fintroduce-run-return#930e45fd0a3ccf5f2dafb00558a5592d8e22a8ed"
+source = "git+https://github.com/thomaseizinger/tauri?branch=feat%2Fintroduce-run-return#93f566ca4f46b390ac0833c75ca8c39338a1c446"
 dependencies = [
  "gtk",
  "http",
@@ -6780,7 +6780,7 @@ dependencies = [
 [[package]]
 name = "tauri-utils"
 version = "2.1.1"
-source = "git+https://github.com/thomaseizinger/tauri?branch=feat%2Fintroduce-run-return#930e45fd0a3ccf5f2dafb00558a5592d8e22a8ed"
+source = "git+https://github.com/thomaseizinger/tauri?branch=feat%2Fintroduce-run-return#93f566ca4f46b390ac0833c75ca8c39338a1c446"
 dependencies = [
  "brotli",
  "cargo_metadata",
