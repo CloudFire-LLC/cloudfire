@@ -404,16 +404,14 @@ impl<'a> Handler<'a> {
                         continue;
                     }
 
-                    match self.session.take() {
-                        Some(Session::Connected { cb_rx, connlib }) => {
+                    match self.session.as_ref() {
+                        Some(Session::Connected { connlib, .. }) => {
                             connlib.reset();
-
-                            self.session = Some(Session::Connected { cb_rx, connlib });
                         }
                         Some(Session::WaitingForNetwork { api_url, token }) => {
                             tracing::info!("Attempting to re-connect upon network change");
 
-                            let result = self.try_connect(&api_url, token.clone());
+                            let result = self.try_connect(&api_url.clone(), token.clone());
 
                             if let Some(e) = result
                                 .as_ref()
@@ -421,7 +419,6 @@ impl<'a> Handler<'a> {
                                 .and_then(|e| e.root_cause().downcast_ref::<io::Error>())
                             {
                                 tracing::debug!("Still cannot connect to Firezone: {e}");
-                                self.session = Some(Session::WaitingForNetwork { api_url, token });
 
                                 continue;
                             }
