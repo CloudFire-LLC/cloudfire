@@ -248,13 +248,14 @@ pub(crate) fn run(
         updates_rx,
     );
 
-    let ctrl_task = rt.spawn({
+    let ctrl_task = rt.spawn(controller);
+    // Spawn a supervisor task that exits the app in any error case, even panics.
+    let ctrl_supervisor = rt.spawn({
         let handle = app.handle().clone();
+
         async move {
-            let result = controller.await;
-
-            handle.exit(0); // TODO: Introduce `GuiIntegration::shutdown/exit`.
-
+            let result = ctrl_task.await;
+            handle.exit(0);
             result
         }
     });
@@ -297,19 +298,19 @@ pub(crate) fn run(
     // The controller task shuts down the Tauri app before it exits.
     // Hence, this future will almost certainly be `Ready` immediately when we get here.
     // We await it here because we want the `Result` from the controller.
-    match rt.block_on(ctrl_task) {
-        Err(panic) => {
+    match rt.block_on(ctrl_supervisor) {
+        Err(panic) | Ok(Err(panic)) => {
             // The panic will have been recorded already by Sentry's panic hook.
             rt.block_on(telemetry.stop_on_crash());
 
             bail!("Controller panicked: {panic}")
         }
-        Ok(Err(error)) => {
+        Ok(Ok(Err(error))) => {
             rt.block_on(telemetry.stop_on_crash());
 
             return Err(anyhow::Error::new(error));
         }
-        Ok(Ok(_)) => {
+        Ok(Ok(Ok(_))) => {
             tracing::info!("Controller exited gracefully");
 
             rt.block_on(telemetry.stop());
