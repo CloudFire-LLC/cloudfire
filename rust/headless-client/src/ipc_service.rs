@@ -24,7 +24,6 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
     io::{self, Write},
-    net::IpAddr,
     path::PathBuf,
     pin::pin,
     sync::Arc,
@@ -94,8 +93,6 @@ pub enum ClientMsg {
     ApplyLogFilter {
         directives: String,
     },
-    Reset,
-    SetDns(Vec<IpAddr>),
     SetDisabledResources(BTreeSet<ResourceId>),
     StartTelemetry {
         environment: String,
@@ -109,7 +106,7 @@ pub enum ClientMsg {
 pub enum ServerMsg {
     /// The IPC service finished clearing its log dir.
     ClearedLogs(Result<(), String>),
-    ConnectResult(Result<(), Error>),
+    ConnectResult(Result<(), String>),
     DisconnectedGracefully,
     OnDisconnect {
         error_msg: String,
@@ -126,24 +123,9 @@ pub enum ServerMsg {
     TunnelReady,
 }
 
-// All variants are `String` because almost no error type implements `Serialize`
-#[derive(Debug, Deserialize, Serialize, thiserror::Error)]
-pub enum Error {
-    #[error("IO error: {0}")]
-    Io(String),
-    #[error("{0}")]
-    Other(String),
-}
-
-impl From<io::Error> for Error {
-    fn from(v: io::Error) -> Self {
-        Self::Io(v.to_string())
-    }
-}
-
-impl From<anyhow::Error> for Error {
-    fn from(v: anyhow::Error) -> Self {
-        Self::Other(format!("{v:#}"))
+impl ServerMsg {
+    fn connect_result(result: Result<()>) -> Self {
+        Self::ConnectResult(result.map_err(|e| format!("{e:#}")))
     }
 }
 
@@ -305,9 +287,15 @@ struct Handler<'a> {
     network_notifier: BoxStream<'static, Result<()>>,
 }
 
-struct Session {
-    cb_rx: mpsc::Receiver<ConnlibMsg>,
-    connlib: connlib_client_shared::Session,
+enum Session {
+    Connected {
+        cb_rx: mpsc::Receiver<ConnlibMsg>,
+        connlib: connlib_client_shared::Session,
+    },
+    RetryWhenConnected {
+        api_url: String,
+        token: SecretString,
+    },
 }
 
 enum Event {
@@ -411,20 +399,50 @@ impl<'a> Handler<'a> {
                     tracing::warn!("Error while listening for DNS change events: {e:#}")
                 }
                 Event::NetworkChanged(Ok(())) => {
-                    let Some(session) = self.session.as_ref() else {
+                    if self.last_connlib_start_instant.is_some() {
+                        tracing::debug!("Ignoring network change since we're still signing in");
                         continue;
-                    };
+                    }
 
-                    session.connlib.reset();
+                    match self.session.take() {
+                        Some(Session::Connected { cb_rx, connlib }) => {
+                            connlib.reset();
+
+                            self.session = Some(Session::Connected { cb_rx, connlib });
+                        }
+                        Some(Session::RetryWhenConnected { api_url, token }) => {
+                            tracing::info!("Attempting to re-connect upon network change");
+
+                            let result = self.try_connect(&api_url, token.clone());
+
+                            if let Some(e) = result
+                                .as_ref()
+                                .err()
+                                .and_then(|e| e.root_cause().downcast_ref::<io::Error>())
+                            {
+                                tracing::debug!("Still cannot connect to Firezone: {e}");
+                                self.session = Some(Session::RetryWhenConnected { api_url, token });
+
+                                continue;
+                            }
+
+                            let _ = self
+                                .ipc_tx
+                                .send(&ServerMsg::connect_result(result))
+                                .await
+                                .context("Failed to send `ConnectResult`");
+                        }
+                        None => continue,
+                    }
                 }
                 Event::DnsChanged(Ok(())) => {
-                    let Some(session) = self.session.as_ref() else {
+                    let Some(Session::Connected { connlib, .. }) = self.session.as_ref() else {
                         continue;
                     };
 
                     let resolvers = self.dns_controller.system_resolvers();
 
-                    session.connlib.set_dns(resolvers);
+                    connlib.set_dns(resolvers);
                 }
             }
         }
@@ -457,9 +475,9 @@ impl<'a> Handler<'a> {
             });
         }
 
-        if let Some(session) = self.session.as_mut() {
+        if let Some(Session::Connected { cb_rx, .. }) = self.session.as_mut() {
             // `tokio::sync::mpsc::Receiver::recv` is cancel-safe.
-            if let Poll::Ready(option) = session.cb_rx.poll_recv(cx) {
+            if let Poll::Ready(option) = cb_rx.poll_recv(cx) {
                 return Poll::Ready(match option {
                     Some(x) => Event::Callback(x),
                     None => Event::CallbackChannelClosed,
@@ -476,9 +494,9 @@ impl<'a> Handler<'a> {
                 error_msg,
                 is_authentication_error,
             } => {
-                if let Some(session) = self.session.take() {
+                if let Some(Session::Connected { connlib, .. }) = self.session.take() {
                     // Identical to dropping, but looks nicer
-                    session.connlib.disconnect();
+                    connlib.disconnect();
                 }
                 self.dns_controller.deactivate()?;
                 self.ipc_tx
@@ -534,19 +552,30 @@ impl<'a> Handler<'a> {
                     .context("Error while sending IPC message")?
             }
             ClientMsg::Connect { api_url, token } => {
-                // Warning: Connection errors don't bubble to callers of `handle_ipc_msg`.
-                let token = secrecy::SecretString::from(token);
-                let result = self.connect_to_firezone(&api_url, token);
+                let token = SecretString::new(token);
+
+                let result = self.try_connect(&api_url, token.clone());
+
+                if let Some(e) = result
+                    .as_ref()
+                    .err()
+                    .and_then(|e| e.root_cause().downcast_ref::<io::Error>())
+                {
+                    tracing::debug!("Encountered IO error when connecting to portal, most likely we don't have Internet: {e}");
+                    self.session = Some(Session::RetryWhenConnected { api_url, token });
+
+                    return Ok(());
+                }
 
                 self.ipc_tx
-                    .send(&ServerMsg::ConnectResult(result))
+                    .send(&ServerMsg::connect_result(result))
                     .await
-                    .context("Failed to send `ConnectResult`")?
+                    .context("Failed to send `ConnectResult`")?;
             }
             ClientMsg::Disconnect => {
-                if let Some(session) = self.session.take() {
+                if let Some(Session::Connected { connlib, .. }) = self.session.take() {
                     // Identical to dropping it, but looks nicer.
-                    session.connlib.disconnect();
+                    connlib.disconnect();
                     self.dns_controller.deactivate()?;
                 }
                 // Always send `DisconnectedGracefully` even if we weren't connected,
@@ -567,35 +596,14 @@ impl<'a> Handler<'a> {
                     tracing::warn!(path = %path.display(), %directives, "Failed to write new log directives: {}", err_with_src(&e));
                 }
             }
-            ClientMsg::Reset => {
-                if self.last_connlib_start_instant.is_some() {
-                    tracing::debug!("Ignoring reset since we're still signing in");
-                    return Ok(());
-                }
-                let Some(session) = self.session.as_ref() else {
-                    tracing::debug!("Cannot reset if we're signed out");
-                    return Ok(());
-                };
-
-                session.connlib.reset();
-            }
-            ClientMsg::SetDns(resolvers) => {
-                let Some(session) = self.session.as_ref() else {
-                    tracing::debug!("Cannot set DNS resolvers if we're signed out");
-                    return Ok(());
-                };
-
-                tracing::debug!(?resolvers);
-                session.connlib.set_dns(resolvers);
-            }
             ClientMsg::SetDisabledResources(disabled_resources) => {
-                let Some(session) = self.session.as_ref() else {
+                let Some(Session::Connected { connlib, .. }) = self.session.as_ref() else {
                     // At this point, the GUI has already saved the disabled Resources to disk, so it'll be correct on the next sign-in anyway.
                     tracing::debug!("Cannot set disabled resources if we're signed out");
                     return Ok(());
                 };
 
-                session.connlib.set_disabled_resources(disabled_resources);
+                connlib.set_disabled_resources(disabled_resources);
             }
             ClientMsg::StartTelemetry {
                 environment,
@@ -615,10 +623,8 @@ impl<'a> Handler<'a> {
 
     /// Connects connlib
     ///
-    /// Panics if there's no Tokio runtime or if connlib is already connected
-    ///
-    /// Throws matchable errors for bad URLs, unable to reach the portal, or unable to create the tunnel device
-    fn connect_to_firezone(&mut self, api_url: &str, token: SecretString) -> Result<(), Error> {
+    /// Panics if there's no Tokio runtime or if connlib is already connected.
+    fn try_connect(&mut self, api_url: &str, token: SecretString) -> Result<()> {
         let _connect_span = telemetry_span!("connect_to_firezone").entered();
 
         assert!(self.session.is_none());
@@ -653,7 +659,7 @@ impl<'a> Handler<'a> {
                     .build()
             },
             Arc::new(tcp_socket_factory),
-        )?; // Turn this `io::Error` directly into an `Error` so we can distinguish it from others in the GUI client.
+        )?;
 
         // Read the resolvers before starting connlib, in case connlib's startup interferes.
         let dns = self.dns_controller.system_resolvers();
@@ -677,7 +683,7 @@ impl<'a> Handler<'a> {
         };
         connlib.set_tun(Box::new(tun));
 
-        let session = Session { cb_rx, connlib };
+        let session = Session::Connected { cb_rx, connlib };
         self.session = Some(session);
 
         Ok(())
