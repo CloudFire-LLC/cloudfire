@@ -170,7 +170,7 @@ extension FileManager {
 // TODO: Refactor body length
 // swiftlint:disable:next type_body_length
 public struct SettingsView: View {
-  @ObservedObject var favorites: Favorites
+  @EnvironmentObject var favorites: Favorites
   @ObservedObject var model: SettingsViewModel
   @Environment(\.dismiss) var dismiss
 
@@ -220,8 +220,7 @@ public struct SettingsView: View {
     )
   }
 
-  public init(favorites: Favorites, model: SettingsViewModel) {
-    self.favorites = favorites
+  public init(model: SettingsViewModel) {
     self.model = model
   }
 
@@ -377,7 +376,7 @@ public struct SettingsView: View {
                   favorites.reset()
                 }
               )
-              .disabled(favorites.ids.isEmpty && model.settings == Settings.defaultValue)
+              .disabled(favorites.isEmpty() && model.settings == Settings.defaultValue)
             }
             .padding(.top, 5)
           }
@@ -448,9 +447,10 @@ public struct SettingsView: View {
                   "Reset to Defaults",
                   action: {
                     model.settings = Settings.defaultValue
+                    favorites.reset()
                   }
                 )
-                .disabled(model.settings == Settings.defaultValue)
+                .disabled(favorites.isEmpty() && model.settings == Settings.defaultValue)
                 Spacer()
               }
             },

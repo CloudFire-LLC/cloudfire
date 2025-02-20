@@ -41,7 +41,7 @@ struct iOSNavigationView<Content: View>: View { // swiftlint:disable:this type_n
         )
     }
     .sheet(isPresented: $isSettingsPresented) {
-      SettingsView(favorites: model.favorites, model: SettingsViewModel(store: model.store))
+      SettingsView(model: SettingsViewModel(store: model.store))
     }
     .navigationViewStyle(StackNavigationViewStyle())
   }
