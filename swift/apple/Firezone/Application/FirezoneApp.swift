@@ -26,7 +26,7 @@ struct FirezoneApp: App {
     let store = Store()
     _favorites = StateObject(wrappedValue: favorites)
     _store = StateObject(wrappedValue: store)
-    _appViewModel = StateObject(wrappedValue: AppViewModel(favorites: favorites, store: store))
+    _appViewModel = StateObject(wrappedValue: AppViewModel(store: store))
 
 #if os(macOS)
     appDelegate.store = store
@@ -37,7 +37,9 @@ struct FirezoneApp: App {
   var body: some Scene {
 #if os(iOS)
     WindowGroup {
-      AppView(model: appViewModel).environmentObject(errorHandler)
+      AppView(model: appViewModel)
+        .environmentObject(errorHandler)
+        .environmentObject(favorites)
     }
 #elseif os(macOS)
     WindowGroup(
@@ -46,7 +48,9 @@ struct FirezoneApp: App {
     ) {
       if let menuBar = appDelegate.menuBar {
         // menuBar will be initialized by this point
-        AppView(model: appViewModel).environmentObject(menuBar)
+        AppView(model: appViewModel)
+          .environmentObject(menuBar)
+          .environmentObject(favorites)
       } else {
         ProgressView("Loading...")
       }
@@ -59,7 +63,8 @@ struct FirezoneApp: App {
       "Settings",
       id: AppViewModel.WindowDefinition.settings.identifier
     ) {
-      SettingsView(favorites: favorites, model: SettingsViewModel(store: store))
+      SettingsView(model: SettingsViewModel(store: store))
+        .environmentObject(favorites)
     }
     .handlesExternalEvents(
       matching: [AppViewModel.WindowDefinition.settings.externalEventMatchString]
@@ -78,7 +83,7 @@ struct FirezoneApp: App {
     func applicationDidFinishLaunching(_: Notification) {
       if let store,
          let favorites {
-        menuBar = MenuBar(model: SessionViewModel(favorites: favorites, store: store))
+        menuBar = MenuBar(model: SessionViewModel(store: store), favorites: favorites)
       }
 
       // SwiftUI will show the first window group, so close it on launch

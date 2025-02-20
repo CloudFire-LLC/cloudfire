@@ -20,7 +20,6 @@ import UserNotifications
 
 @MainActor
 public class AppViewModel: ObservableObject {
-  let favorites: Favorites
   let store: Store
   let sessionNotification: SessionNotification
 
@@ -29,8 +28,7 @@ public class AppViewModel: ObservableObject {
 
   private var cancellables = Set<AnyCancellable>()
 
-  public init(favorites: Favorites, store: Store) {
-    self.favorites = favorites
+  public init(store: Store) {
     self.store = store
     self.sessionNotification = SessionNotification()
 
@@ -116,7 +114,7 @@ public struct AppView: View {
       }
     case (_, _):
       iOSNavigationView(model: model) {
-        SessionView(model: SessionViewModel(favorites: model.favorites, store: model.store))
+        SessionView(model: SessionViewModel(store: model.store))
       }
     }
 #elseif os(macOS)

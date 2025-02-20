@@ -36,6 +36,7 @@ public final class MenuBar: NSObject, ObservableObject {
   private var updateMenuDisplayed: Bool = false
 
   @ObservedObject var model: SessionViewModel
+  @ObservedObject var favorites: Favorites
 
   private var signedOutIcon: NSImage?
   private var signedInConnectedIcon: NSImage?
@@ -49,9 +50,10 @@ public final class MenuBar: NSObject, ObservableObject {
   private var connectingAnimationImageIndex: Int = 0
   private var connectingAnimationTimer: Timer?
 
-  public init(model: SessionViewModel) {
+  public init(model: SessionViewModel, favorites: Favorites) {
     statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     self.model = model
+    self.favorites = favorites
 
     super.init()
 
@@ -102,7 +104,7 @@ public final class MenuBar: NSObject, ObservableObject {
   }
 
   private func setupObservers() {
-    model.favorites.$ids
+    favorites.objectWillChange
       .receive(on: DispatchQueue.main)
       .sink(receiveValue: { [weak self] _ in
         guard let self = self else { return }
@@ -266,7 +268,7 @@ public final class MenuBar: NSObject, ObservableObject {
     menu.addItem(resourcesUnavailableReasonMenuItem)
     menu.addItem(resourcesSeparatorMenuItem)
 
-    if !model.favorites.ids.isEmpty {
+    if !favorites.isEmpty() {
       menu.addItem(otherResourcesMenuItem)
       menu.addItem(otherResourcesSeparatorMenuItem)
     }
@@ -537,14 +539,14 @@ public final class MenuBar: NSObject, ObservableObject {
 
   private func populateResourceMenus(_ newResources: [Resource]) {
     // If we have no favorites, then everything is a favorite
-    let hasAnyFavorites = newResources.contains { model.favorites.contains($0.id) }
+    let hasAnyFavorites = newResources.contains { favorites.contains($0.id) }
     let newFavorites = if hasAnyFavorites {
-      newResources.filter { model.favorites.contains($0.id) || $0.isInternetResource() }
+      newResources.filter { favorites.contains($0.id) || $0.isInternetResource() }
     } else {
       newResources
     }
     let newOthers: [Resource] = if hasAnyFavorites {
-      newResources.filter { !model.favorites.contains($0.id) && !$0.isInternetResource() }
+      newResources.filter { !favorites.contains($0.id) && !$0.isInternetResource() }
     } else {
       []
     }
@@ -730,7 +732,7 @@ public final class MenuBar: NSObject, ObservableObject {
 
     let toggleFavoriteItem = NSMenuItem()
 
-    if model.favorites.contains(resource.id) {
+    if favorites.contains(resource.id) {
       toggleFavoriteItem.action = #selector(removeFavoriteTapped(_:))
       toggleFavoriteItem.title = "Remove from favorites"
       toggleFavoriteItem.toolTip = "Click to remove this Resource from Favorites"
@@ -861,9 +863,9 @@ public final class MenuBar: NSObject, ObservableObject {
 
   private func setFavorited(id: String, favorited: Bool) {
     if favorited {
-      model.favorites.add(id)
+      favorites.add(id)
     } else {
-      model.favorites.remove(id)
+      favorites.remove(id)
     }
   }
 

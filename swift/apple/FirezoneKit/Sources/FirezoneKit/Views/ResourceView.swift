@@ -101,6 +101,7 @@ struct NonInternetResourceHeader: View {
   @ObservedObject var model: SessionViewModel
   var resource: Resource
   @Environment(\.openURL) var openURL
+  @EnvironmentObject var favorites: Favorites
 
   var body: some View {
     Section(header: Text("Resource")) {
@@ -170,10 +171,10 @@ struct NonInternetResourceHeader: View {
         }
       }
 
-      if model.favorites.ids.contains(resource.id) {
+      if favorites.contains(resource.id) {
         Button(
           action: {
-            model.favorites.remove(resource.id)
+            favorites.remove(resource.id)
           },
           label: {
             HStack {
@@ -186,7 +187,7 @@ struct NonInternetResourceHeader: View {
       } else {
         Button(
           action: {
-            model.favorites.add(resource.id)
+            favorites.add(resource.id)
           }, label: {
             HStack {
               Image(systemName: "star.fill")

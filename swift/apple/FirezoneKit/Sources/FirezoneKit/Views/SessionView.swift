@@ -12,7 +12,6 @@ import SwiftUI
 @MainActor
 public final class SessionViewModel: ObservableObject {
   @Published private(set) var actorName: String?
-  @Published private(set) var favorites: Favorites
   @Published private(set) var resources: ResourceList = ResourceList.loading
   @Published private(set) var status: NEVPNStatus?
 
@@ -20,17 +19,8 @@ public final class SessionViewModel: ObservableObject {
 
   private var cancellables: Set<AnyCancellable> = []
 
-  public init(favorites: Favorites, store: Store) {
-    self.favorites = favorites
+  public init(store: Store) {
     self.store = store
-
-    favorites.$ids
-      .receive(on: DispatchQueue.main)
-      .sink(receiveValue: { [weak self] _ in
-        guard let self = self else { return }
-        self.objectWillChange.send()
-      })
-      .store(in: &cancellables)
 
     store.$actorName
       .receive(on: DispatchQueue.main)
@@ -69,6 +59,7 @@ public final class SessionViewModel: ObservableObject {
 @MainActor
 struct SessionView: View {
   @ObservedObject var model: SessionViewModel
+  @EnvironmentObject var favorites: Favorites
 
   var body: some View {
     switch model.status {
@@ -79,18 +70,18 @@ struct SessionView: View {
           Text("No Resources. Contact your admin to be granted access.")
         } else {
           List {
-            let hasAnyFavorites = resources.contains { model.favorites.contains($0.id) }
+            let hasAnyFavorites = resources.contains { favorites.contains($0.id) }
             if hasAnyFavorites {
               Section("Favorites") {
                 ResourceSection(
-                  resources: resources.filter { model.favorites.contains($0.id) },
+                  resources: resources.filter { favorites.contains($0.id) },
                   model: model
                 )
               }
 
               Section("Other Resources") {
                 ResourceSection(
-                  resources: resources.filter { !model.favorites.contains($0.id) },
+                  resources: resources.filter { !favorites.contains($0.id) },
                   model: model
                 )
               }
