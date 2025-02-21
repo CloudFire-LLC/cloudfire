@@ -11,7 +11,7 @@ use connlib_model::{ClientId, DomainName, GatewayId, ResourceId};
 use filter_engine::FilterEngine;
 use ip_network::{IpNetwork, Ipv4Network, Ipv6Network};
 use ip_network_table::IpNetworkTable;
-use ip_packet::IpPacket;
+use ip_packet::{icmpv4, icmpv6, IpPacket, PacketBuilder};
 
 use crate::utils::network_contains_network;
 use crate::GatewayEvent;
@@ -106,26 +106,39 @@ impl ClientOnGateway {
 
         anyhow::ensure!(crate::dns::is_subdomain(&name, address));
 
-        let mapped_ipv4 = mapped_ipv4(&resolved_ips);
-        let mapped_ipv6 = mapped_ipv6(&resolved_ips);
+        fn into_optional_set(set: BTreeSet<IpAddr>) -> BTreeSet<Option<IpAddr>> {
+            if set.is_empty() {
+                return BTreeSet::from([None]);
+            }
 
-        let ipv4_maps = proxy_ips
-            .iter()
-            .filter(|ip| ip.is_ipv4())
-            .zip(mapped_ipv4.iter().cycle().copied());
+            set.into_iter().map(Some).collect()
+        }
 
-        let ipv6_maps = proxy_ips
-            .iter()
-            .filter(|ip| ip.is_ipv6())
-            .zip(mapped_ipv6.iter().cycle().copied());
+        let (proxy_ipv4, proxy_ipv6) = proxy_ips
+            .clone()
+            .into_iter()
+            .partition::<BTreeSet<_>, _>(|ip| ip.is_ipv4());
+        let (resolved_ipv4, resolved_ipv6) = resolved_ips
+            .clone()
+            .into_iter()
+            .partition::<BTreeSet<_>, _>(|ip| ip.is_ipv4());
 
-        let ip_maps = ipv4_maps.chain(ipv6_maps);
+        let resolved_ipv4 = into_optional_set(resolved_ipv4);
+        let resolved_ipv6 = into_optional_set(resolved_ipv6);
 
-        for (proxy_ip, real_ip) in ip_maps {
-            tracing::debug!(%name, %proxy_ip, %real_ip);
+        let ipv4_maps = proxy_ipv4
+            .into_iter()
+            .zip(resolved_ipv4.iter().cycle().copied());
+
+        let ipv6_maps = proxy_ipv6
+            .into_iter()
+            .zip(resolved_ipv6.iter().cycle().copied());
+
+        for (proxy_ip, real_ip) in ipv4_maps.chain(ipv6_maps) {
+            tracing::debug!(%name, %proxy_ip, ?real_ip);
 
             self.permanent_translations
-                .insert(*proxy_ip, TranslationState::new(resource_id, real_ip));
+                .insert(proxy_ip, TranslationState::new(resource_id, real_ip));
         }
 
         tracing::debug!(domain = %name, ?resolved_ips, ?proxy_ips, "Set up DNS resource NAT");
@@ -249,38 +262,68 @@ impl ClientOnGateway {
         &mut self,
         packet: IpPacket,
         now: Instant,
-    ) -> anyhow::Result<IpPacket> {
-        let Some(state) = self.permanent_translations.get_mut(&packet.destination()) else {
-            return Ok(packet);
+    ) -> anyhow::Result<TranslateOutboundResult> {
+        // Packets for CIDR resources / Internet resource are forwarded as is.
+        if !is_dns_addr(packet.destination()) {
+            return Ok(TranslateOutboundResult::Send(packet));
+        }
+
+        let Some(state) = self.permanent_translations.get(&packet.destination()) else {
+            bail!("No translation entry for {}", packet.destination())
+        };
+
+        let Some(resolved_ip) = state.resolved_ip else {
+            let icmp_error = match packet.destination() {
+                IpAddr::V4(inside_dst) => {
+                    let icmpv4 = PacketBuilder::ipv4(inside_dst.octets(), self.ipv4.octets(), 20)
+                        .icmpv4(ip_packet::Icmpv4Type::DestinationUnreachable(
+                            icmpv4::DestUnreachableHeader::Host,
+                        ));
+                    let payload = packet.packet();
+
+                    ip_packet::build!(icmpv4, payload)?
+                }
+                IpAddr::V6(inside_dst) => {
+                    let icmpv6 = PacketBuilder::ipv6(inside_dst.octets(), self.ipv6.octets(), 20)
+                        .icmpv6(ip_packet::Icmpv6Type::DestinationUnreachable(
+                            icmpv6::DestUnreachableCode::NoRoute,
+                        ));
+                    let payload = packet.packet();
+
+                    ip_packet::build!(icmpv6, payload)?
+                }
+            };
+
+            return Ok(TranslateOutboundResult::DestinationUnreachable(icmp_error));
         };
 
         let (source_protocol, real_ip) =
             self.nat_table
-                .translate_outgoing(&packet, state.resolved_ip, now)?;
+                .translate_outgoing(&packet, resolved_ip, now)?;
 
         let mut packet = packet
-            .translate_destination(self.ipv4, self.ipv6, source_protocol, real_ip)
+            .translate_destination(source_protocol, real_ip)
             .context("Failed to translate packet to new destination")?;
         packet.update_checksum();
 
-        Ok(packet)
+        Ok(TranslateOutboundResult::Send(packet))
     }
 
     pub fn translate_outbound(
         &mut self,
         packet: IpPacket,
         now: Instant,
-    ) -> anyhow::Result<Option<IpPacket>> {
+    ) -> anyhow::Result<TranslateOutboundResult> {
         // Filtering a packet is not an error.
         if let Err(e) = self.ensure_allowed(&packet) {
             tracing::debug!(filtered_packet = ?packet, "{e:#}");
-            return Ok(None);
+            return Ok(TranslateOutboundResult::Filtered);
         }
 
         // Failing to transform is an error we want to know about further up.
-        let packet = self.transform_network_to_tun(packet, now)?;
+        let result = self.transform_network_to_tun(packet, now)?;
 
-        Ok(Some(packet))
+        Ok(result)
     }
 
     pub fn translate_inbound(
@@ -311,7 +354,7 @@ impl ClientOnGateway {
         };
 
         let mut packet = packet
-            .translate_source(self.ipv4, self.ipv6, proto, ip)
+            .translate_source(proto, ip)
             .context("Failed to translate packet to new source")?;
         packet.update_checksum();
 
@@ -362,6 +405,13 @@ impl ClientOnGateway {
     pub fn id(&self) -> ClientId {
         self.id
     }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum TranslateOutboundResult {
+    Send(IpPacket),
+    DestinationUnreachable(IpPacket),
+    Filtered,
 }
 
 impl GatewayOnClient {
@@ -503,39 +553,17 @@ struct TranslationState {
     /// Which (DNS) resource we belong to.
     resource_id: ResourceId,
     /// The IP we have resolved for the domain.
-    resolved_ip: IpAddr,
+    ///
+    /// `None` if we didn't resolve an IP (i.e. AAAA query didn't return any records).
+    resolved_ip: Option<IpAddr>,
 }
 
 impl TranslationState {
-    fn new(resource_id: ResourceId, resolved_ip: IpAddr) -> Self {
+    fn new(resource_id: ResourceId, resolved_ip: Option<IpAddr>) -> Self {
         Self {
             resource_id,
             resolved_ip,
         }
-    }
-}
-
-fn ipv4_addresses(ip: &BTreeSet<IpAddr>) -> BTreeSet<IpAddr> {
-    ip.iter().filter(|ip| ip.is_ipv4()).copied().collect()
-}
-
-fn ipv6_addresses(ip: &BTreeSet<IpAddr>) -> BTreeSet<IpAddr> {
-    ip.iter().filter(|ip| ip.is_ipv6()).copied().collect()
-}
-
-fn mapped_ipv4(ips: &BTreeSet<IpAddr>) -> BTreeSet<IpAddr> {
-    if !ipv4_addresses(ips).is_empty() {
-        ipv4_addresses(ips)
-    } else {
-        ipv6_addresses(ips)
-    }
-}
-
-fn mapped_ipv6(ips: &BTreeSet<IpAddr>) -> BTreeSet<IpAddr> {
-    if !ipv6_addresses(ips).is_empty() {
-        ipv6_addresses(ips)
-    } else {
-        ipv4_addresses(ips)
     }
 }
 
@@ -672,10 +700,10 @@ mod tests {
         )
         .unwrap();
 
-        assert!(peer
-            .translate_outbound(pkt, Instant::now())
-            .unwrap()
-            .is_none());
+        assert!(matches!(
+            peer.translate_outbound(pkt, Instant::now()).unwrap(),
+            crate::peer::TranslateOutboundResult::Filtered
+        ));
 
         let pkt = ip_packet::make::udp_packet(
             source_v4_addr(),
@@ -686,10 +714,10 @@ mod tests {
         )
         .unwrap();
 
-        assert!(peer
-            .translate_outbound(pkt, Instant::now())
-            .unwrap()
-            .is_none());
+        assert!(matches!(
+            peer.translate_outbound(pkt, Instant::now()).unwrap(),
+            crate::peer::TranslateOutboundResult::Filtered
+        ));
 
         let pkt = ip_packet::make::udp_packet(
             source_v4_addr(),
@@ -736,10 +764,10 @@ mod tests {
         )
         .unwrap();
 
-        assert!(peer
-            .translate_outbound(pkt, Instant::now())
-            .unwrap()
-            .is_none());
+        assert!(matches!(
+            peer.translate_outbound(pkt, Instant::now()).unwrap(),
+            crate::peer::TranslateOutboundResult::Filtered
+        ));
 
         let pkt = ip_packet::make::udp_packet(
             source_v4_addr(),
